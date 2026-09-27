@@ -140,10 +140,12 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="FlightSystem.cpp" />
+    <ClCompile Include="JsonStorage.cpp" />
     <ClCompile Include="main.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="FlightSystem.h" />
+    <ClInclude Include="JsonStorage.h" />
   </ItemGroup>
   <ItemGroup>
     <None Include=".gitignore" />

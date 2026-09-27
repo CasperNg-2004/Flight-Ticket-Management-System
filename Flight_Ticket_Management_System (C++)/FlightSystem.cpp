@@ -1,890 +1,316 @@
 #include "FlightSystem.h"
+#include "JsonStorage.h"
 
+#include <algorithm>
+#include <chrono>
 #include <cctype>
 #include <cstdlib>
-#include <fstream>
+#include <filesystem>
 #include <iostream>
+#include <sstream>
 #include <string>
+#include <vector>
 
 using namespace std;
 
-string currentUser = "lily";
-string firstNameD = "Lily Lee Li";
-string lastNameD = "Ling";
+string currentUser;
+string firstNameD, lastNameD, departDD, returnDD;
+int flightDepartD = 0, slotDepartD = 0, flightReturnD = 0, slotReturnD = 0, noTickets = 0;
 
-int flightDepartD = 7;
-string departDD = "12/08/2025";
-int slotDepartD = 1;
+namespace {
+const string routes[] = { "KL - Penang", "Penang - KL", "KL - Johor", "Johor - KL", "KL - Singapore", "Singapore - KL", "KL - Bangkok", "Bangkok - KL" };
+const string slots[] = { "8:00 A.M.", "13:00 P.M.", "18:00 P.M.", "23:00 P.M." };
+const int prices[] = { 200, 200, 200, 200, 250, 250, 300, 300 };
 
-int flightReturnD = 8;
-string returnDD = "14/08/2025";
-int slotReturnD = 3;
+string requiredLine(const string& prompt) {
+	while (true) {
+		cout << prompt;
+		string value;
+		getline(cin, value);
+		if (!value.empty()) return value;
+		cout << "This field cannot be empty.\n";
+	}
+}
 
-int noTickets = 3;
+char yesNo(const string& prompt) {
+	while (true) {
+		string value = requiredLine(prompt);
+		char choice = static_cast<char>(tolower(static_cast<unsigned char>(value[0])));
+		if (value.size() == 1 && (choice == 'y' || choice == 'n')) return choice;
+		cout << "Please enter y or n.\n";
+	}
+}
+
+bool parseDate(const string& value, chrono::year_month_day& result) {
+	if (value.size() != 10 || value[2] != '/' || value[5] != '/') return false;
+	for (size_t i : { 0u, 1u, 3u, 4u, 6u, 7u, 8u, 9u })
+		if (!isdigit(static_cast<unsigned char>(value[i]))) return false;
+	try {
+		result = chrono::year{ stoi(value.substr(6, 4)) } /
+			chrono::month{ static_cast<unsigned>(stoi(value.substr(3, 2))) } /
+			chrono::day{ static_cast<unsigned>(stoi(value.substr(0, 2))) };
+		return result.ok();
+	}
+	catch (...) { return false; }
+}
+
+string validDate(const string& prompt) {
+	while (true) {
+		string value = requiredLine(prompt);
+		chrono::year_month_day parsed;
+		if (parseDate(value, parsed)) return value;
+		cout << "Enter a valid date in DD/MM/YYYY format.\n";
+	}
+}
+
+bool validDateOrder(const string& departure, const string& returning) {
+	chrono::year_month_day first, second;
+	return parseDate(departure, first) && parseDate(returning, second) && chrono::sys_days(second) >= chrono::sys_days(first);
+}
+
+void updateGlobals(const BookingRecord& booking) {
+	noTickets = static_cast<int>(booking.passengers.size());
+	if (booking.passengers.empty()) return;
+	firstNameD = booking.passengers[0].firstName;
+	lastNameD = booking.passengers[0].lastName;
+	flightDepartD = booking.departureFlight;
+	departDD = booking.departureDate;
+	slotDepartD = booking.departureSlot;
+	flightReturnD = booking.returnFlight;
+	returnDD = booking.returnDate;
+	slotReturnD = booking.returnSlot;
+}
+
+bool isPaid(const string& username) {
+	PaymentRecord paymentRecord;
+	return loadPaymentJson(bookingIdForUser(username), paymentRecord) && paymentRecord.status == "Paid";
+}
+}
+
+int readIntInRange(const string& prompt, int minimum, int maximum) {
+	while (true) {
+		cout << prompt;
+		string input;
+		getline(cin, input);
+		try {
+			size_t used = 0;
+			int value = stoi(input, &used);
+			if (used == input.size() && value >= minimum && value <= maximum) return value;
+		}
+		catch (...) {}
+		cout << "Enter a number from " << minimum << " to " << maximum << ".\n";
+	}
+}
 
 void title() {
-	cout << string(SIZE, '-') << '\n';
-	cout << "JSJK FLIGHT TICKET MANAGEMENT SYSTEM " << '\n';
-	cout << string(SIZE, '-') << '\n';
+	cout << string(SIZE, '-') << "\nJSJK FLIGHT TICKET MANAGEMENT SYSTEM\n" << string(SIZE, '-') << '\n';
 }
 
 void menu() {
-	cout << "1. Book Flight Ticket(s)" << endl;
-	cout << "2. Edit Booking" << endl;
-	cout << "3. Perform Payment" << endl;
-	cout << "4. Check-In Flight" << endl;
-	cout << "5. Print Invoice" << endl;
-	cout << "6. Quit" << endl;
+	cout << "1. Book Flight Ticket(s)\n2. Edit Booking\n3. Perform Payment\n4. Check-In Flight\n5. Print Invoice\n6. Quit\n";
 }
 
 void FlightSchedule() {
-	cout << "Flight Available" << endl;
-	cout << "1. KL - Penang --> RM200" << endl;
-	cout << "2. Penang - KL --> RM200" << endl;
-	cout << "3. KL - Johor --> RM200" << endl;
-	cout << "4. Johor - KL --> RM200" << endl;
-	cout << "5. KL - Singapore --> RM250" << endl;
-	cout << "6. Singapore - KL --> RM250" << endl;
-	cout << "7. KL - Bangkok --> RM300" << endl;
-	cout << "8. Bangkok - KL --> RM300" << endl;
-
-	cout << "Available Departure/Return Time Slots:" << endl;
-	cout << "1. 8:00 A.M." << endl;
-	cout << "2. 13:00 P.M." << endl;
-	cout << "3. 18:00 P.M." << endl;
-	cout << "4. 23:00 P.M." << endl;
+	cout << "Flight Available\n";
+	for (int i = 0; i < 8; ++i) cout << i + 1 << ". " << routes[i] << " --> RM" << prices[i] << '\n';
+	cout << "Available Departure/Return Time Slots:\n";
+	for (int i = 0; i < 4; ++i) cout << i + 1 << ". " << slots[i] << '\n';
 }
 
 void registration() {
-	string firstname, lastname, mobileno, email, username, password, line;
-	char choice;
-	ifstream checkUserExist("user.txt");
-	ofstream addNewUser("user.txt", ios::app);
-	if (!checkUserExist.is_open()) {
-		cout << "Error in open file. Please try again." << '\n';
-		return;
+	UserRecord user;
+	cout << "Please key in details for registration:\n";
+	user.firstName = requiredLine("First name: ");
+	user.lastName = requiredLine("Last name: ");
+	user.mobile = requiredLine("Mobile No: ");
+	user.email = requiredLine("Email: ");
+	user.username = requiredLine("Username: ");
+	while (true) {
+		user.password = requiredLine("Password (at least 8 characters, 1 symbol, 1 uppercase letter, 1 number): ");
+		bool upper = false, digit = false, symbol = false;
+		for (unsigned char ch : user.password) { upper |= !!isupper(ch); digit |= !!isdigit(ch); symbol |= !!ispunct(ch); }
+		if (user.password.size() >= 8 && upper && digit && symbol) break;
+		cout << "The password does not meet the requirements.\n";
 	}
-	if (!addNewUser.is_open()) {
-		cout << "Error in open file. Please try again." << '\n';
-		return;
+	for (const UserRecord& existing : loadUsersJson()) {
+		if (existing.mobile == user.mobile) { cout << "This mobile number has been taken.\n"; return; }
+		if (existing.email == user.email) { cout << "This email has been taken.\n"; return; }
+		if (existing.username == user.username) { cout << "This username has been taken.\n"; return; }
 	}
-	cout << "Please key in details for registration:" << '\n';
-	cout << "First name: ";
-	getline(cin, firstname);
-	cout << "Last name: ";
-	getline(cin, lastname);
-	cout << "Mobile No: ";
-	getline(cin, mobileno);
-	cout << "Email: ";
-	getline(cin, email);
-	cout << "Username: ";
-	getline(cin, username);
-	do {
-		cout << "Password (At least 8 characters (1 symbol, 1 uppercase letter, 1 number)):";
-		getline(cin, password);
-		if (password.length() < 8) {
-			cout << "Password less than 8 characters. Please try again." << '\n';
-			continue;
-		}
-		bool Upper = false, Digit = false, Symbol = false;
-		for (char ch : password) {
-			if (isupper(ch)) Upper = true;
-			else if (isdigit(ch)) Digit = true;
-			else if (ispunct(ch)) Symbol = true;
-		}
-		if (!(Upper && Digit && Symbol)) {
-			cout << "Password must contain at least 1 uppercase letter, 1 digit, and 1 symbol.\n";
-		}
-		else {
-			break;
-		}
-	} while (true);
-
-	cout << "Confirm to register? (y-yes,n-no): ";
-	cin >> choice;
-	choice = tolower(choice);
-	cin.ignore();
-	if (choice == 'y') {
-		bool phonecheck = false, emailcheck = false, usernamecheck = false;
-		//Mobile Number Validation
-		while (getline(checkUserExist, line)) {
-			if (line == mobileno) {
-				phonecheck = true;
-				break;
-			}
-
-		}
-		if (phonecheck) {
-			cout << "This mobile number have been taken. Please try again." << '\n';
-			return;
-		}
-		checkUserExist.clear();
-		checkUserExist.seekg(0);
-		//Email Validation
-		while (getline(checkUserExist, line)) {
-			if (line == email) {
-				emailcheck = true;
-				break;
-			}
-		}
-		if (emailcheck) {
-			cout << "This email have been taken. Please try again." << '\n';
-			return;
-		}
-		checkUserExist.clear();
-		checkUserExist.seekg(0);
-		//Username Validation
-		while (getline(checkUserExist, line)) {
-			if (line == username) {
-				usernamecheck = true;
-				break;
-			}
-		}
-		if (usernamecheck) {
-			cout << "This username have been taken. Please try again." << '\n';
-			return;
-		}
-		//Input Saved to "user.txt"
-		addNewUser << firstname << '\n';
-		addNewUser << lastname << '\n';
-		addNewUser << mobileno << '\n';
-		addNewUser << email << '\n';
-		addNewUser << username << '\n';
-		addNewUser << password << '\n';
-	}
-	else if (choice == 'n') {
-		return;
-	}
-	else {
-		cout << "Invalid input. Please try again. . ." << endl;
-		system("pause");
-	}
-	checkUserExist.close();
-	addNewUser.close();
+	if (yesNo("Confirm registration? (y-yes, n-no): ") == 'y')
+		cout << (saveUserJson(user) ? "Registration successful.\n" : "Unable to save the user.\n");
 }
 
-void readUser(string firstname[], string lastname[], string mobileno[], string email[], string username[], string password[], int& reguser) {
-	ifstream readFile("user.txt");
-	if (!readFile.is_open()) {
-		cout << "Error in open file. Please try again." << '\n';
-		return;
+void readUser(string firstname[], string lastname[], string mobileno[], string email[], string username[], string password[], int& count) {
+	vector<UserRecord> users = loadUsersJson();
+	count = min(static_cast<int>(users.size()), SIZE);
+	for (int i = 0; i < count; ++i) {
+		firstname[i] = users[i].firstName; lastname[i] = users[i].lastName; mobileno[i] = users[i].mobile;
+		email[i] = users[i].email; username[i] = users[i].username; password[i] = users[i].password;
 	}
-	else {
-		reguser = 0;
-		while (getline(readFile, firstname[reguser]) &&//FIRST NAME
-			getline(readFile, lastname[reguser]) &&//LAST NAME
-			getline(readFile, mobileno[reguser]) &&//MOBILE NUMBER
-			getline(readFile, email[reguser]) &&//EMAIL
-			getline(readFile, username[reguser]) &&//USERNAME
-			getline(readFile, password[reguser])) {//PASSWORD) 
-
-			reguser++;
-		}
-		readFile.close();
-	}
+	if (users.size() > SIZE) cerr << "Only the first " << SIZE << " users can be loaded.\n";
 }
 
-int login(string username[], string password[], int reguser) {
-	string userName, passWord;                        //DEFINE VARIABLE
-	bool usernameTrue = false, passwordTrue = false; //DEFINE VARIABLE
-	int userIndex = -1;                              //DEFINE VARIABLE
-
-	cout << "Username: ";
-	getline(cin, userName);							//KEY IN USERNAME
-	cout << "Password: ";
-	getline(cin, passWord);							//KEY IN PASSWORD
-
-	for (int i = 0; i < reguser; i++) {
-		if (username[i] == userName) {					//USERNAME=MATCH
-			usernameTrue = true;
-			if (password[i] == passWord) {				//USERNAME=MATCH AND PASSWORD=MATCH
-				passwordTrue = true;
-				userIndex = i;
-				break;
-			}
-		}
-		else if (password[i] == passWord) {
-			passwordTrue = true;
-		}
-
+int login(string username[], string password[], int count) {
+	string enteredUser = requiredLine("Username: ");
+	string enteredPassword = requiredLine("Password: ");
+	for (int i = 0; i < count; ++i) {
+		if (username[i] != enteredUser) continue;
+		if (password[i] != enteredPassword) { cout << "Incorrect password.\n"; return -1; }
+		currentUser = enteredUser;
+		cout << "Login successful!\n";
+		return i;
 	}
-	if (usernameTrue && passwordTrue) {					//USERNAME=MATCH AND PASSWORD=MATCH
-		cout << "Login successfull!" << '\n';
-		system("pause");
-		currentUser = userName;
-		return userIndex;
-	}
-	else if (usernameTrue && !passwordTrue) {			//USERNAME=MATCH AND PASSWORD/=MATCH
-		cout << "Incorrect Password. Please try again" << '\n';
-		return -1;
-
-
-	}
-	else if (!usernameTrue && passwordTrue) {			//USERNAME/=MATCH AND PASSWORD=MATCH
-		cout << "Username does not exist.Please register an account" << '\n';
-		return -2;
-
-
-	}
-	else {												//USERNAME/=MATCH AND PASSWORD/=MATCH
-		cout << "Invalid username & password. Please try again." << '\n';
-		return -3;
-
-	}
-
+	cout << "Username does not exist.\n";
+	return -1;
 }
 
 void performBooking() {
-	int passengernum;
-	char confirmation;
+	if (isPaid(currentUser)) { cout << "A paid booking already exists and cannot be replaced.\n"; return; }
 	FlightSchedule();
-	cout << "Number of passenger(s):" << endl;
-	cin >> passengernum;
-	cin.ignore();
-	if (passengernum <= 0 || passengernum > SIZE) {
-		cout << "Invalid number of passengers. Please try again. . ." << endl;
-		return;
-	}
-	//TEMPORARY ARRAY FILE
-	string firstnameArr[SIZE], lastnameArr[SIZE], depDateArr[SIZE], retDateArr[SIZE];
-	int depFlightArr[SIZE], depSlotArr[SIZE], flightReturnArr[SIZE], retSlotArr[SIZE];
-	cout << "Please provide the details as below:" << '\n';
-	cout << '\n';
-	for (int i = 0; i < passengernum; i++) {
+	BookingRecord booking;
+	booking.bookingId = bookingIdForUser(currentUser);
+	booking.username = currentUser;
+	int count = readIntInRange("Number of passengers: ", 1, SIZE);
+	for (int i = 0; i < count; ++i) {
 		cout << "Passenger " << i + 1 << '\n';
-		cout << "First Name: ";
-		getline(cin, firstnameArr[i]);
-		cout << "Last Name: ";
-		getline(cin, lastnameArr[i]);
-
-		cout << "Departure Flight: ";
-		cin >> depFlightArr[i];
-		cin.ignore();
-		cout << "Date of Departure (DD/MM/YYYY): ";
-		getline(cin, depDateArr[i]);
-		cout << "Slot of Departure: ";
-		cin >> depSlotArr[i];
-		cin.ignore();
-
-		cout << "Return Flight: ";
-		cin >> flightReturnArr[i];
-		cin.ignore();
-		cout << "Date of Return (DD/MM/YYYY): ";
-		getline(cin, retDateArr[i]);
-		cout << "Slot of Return: ";
-		cin >> retSlotArr[i];
-		cin.ignore();
+		PassengerRecord passenger;
+		passenger.firstName = requiredLine("First Name: ");
+		passenger.lastName = requiredLine("Last Name: ");
+		booking.passengers.push_back(passenger);
 	}
-
-	cout << "Confirm booking (y-yes,n-no): ";
-	cin >> confirmation;
-	confirmation = tolower(confirmation);
-	cin.ignore();
-
-	if (confirmation == 'y') {
-		ofstream bookingFile(currentUser + "_Booking.txt");
-		if (!bookingFile.is_open()) {
-			cout << "File cannot be open. Please try again." << endl;
-			return;
-		}
-		for (int j = 0; j < passengernum; j++) {
-			bookingFile << firstnameArr[j] << '\n';
-			bookingFile << lastnameArr[j] << '\n';
-			bookingFile << depFlightArr[j] << '\n';
-			bookingFile << depDateArr[j] << '\n';
-			bookingFile << depSlotArr[j] << '\n';
-			bookingFile << flightReturnArr[j] << '\n';
-			bookingFile << retDateArr[j] << '\n';
-			bookingFile << retSlotArr[j] << '\n';
-		}
-		bookingFile.close();
-		cout << "Booking process successful. Proceeding to Menu." << '\n';
-		system("pause");
+	booking.departureFlight = readIntInRange("Departure Flight: ", 1, 8);
+	booking.departureDate = validDate("Date of Departure (DD/MM/YYYY): ");
+	booking.departureSlot = readIntInRange("Slot of Departure: ", 1, 4);
+	booking.returnFlight = readIntInRange("Return Flight: ", 1, 8);
+	do {
+		booking.returnDate = validDate("Date of Return (DD/MM/YYYY): ");
+		if (!validDateOrder(booking.departureDate, booking.returnDate)) cout << "Return date cannot be before departure.\n";
+	} while (!validDateOrder(booking.departureDate, booking.returnDate));
+	booking.returnSlot = readIntInRange("Slot of Return: ", 1, 4);
+	if (yesNo("Confirm booking (y-yes, n-no): ") == 'y') {
+		if (saveBookingJson(booking)) { updateGlobals(booking); cout << "Booking successful. Booking ID: " << booking.bookingId << '\n'; }
+		else cout << "Unable to save the booking.\n";
 	}
-	else {
-		cout << "Booking process cancelled. Proceeding to Menu." << '\n';
-		system("pause");
-	}
-
 }
 
-void readBooking(string firstname[], string lastname[], int depflight[], string depdate[], int deptime[], int retflight[], string retdate[], int rettime[], int& totpassenger) {
-	ifstream readingFile(currentUser + "_Booking.txt");
-	totpassenger = 0;
-
-	while (totpassenger < SIZE) {
-		if (!getline(readingFile, firstname[totpassenger])) break;
-		if (!getline(readingFile, lastname[totpassenger])) break;
-
-		if (!(readingFile >> depflight[totpassenger])) break;
-		readingFile.ignore();
-
-		if (!getline(readingFile, depdate[totpassenger])) break;
-
-		if (!(readingFile >> deptime[totpassenger])) break;
-		readingFile.ignore();
-
-		if (!(readingFile >> retflight[totpassenger])) break;
-		readingFile.ignore();
-
-		if (!getline(readingFile, retdate[totpassenger])) break;
-
-		if (!(readingFile >> rettime[totpassenger])) break;
-		readingFile.ignore();
-
-		totpassenger++; // Only increment if full passenger read success
+void readBooking(string firstname[], string lastname[], int depflight[], string depdate[], int deptime[], int retflight[], string retdate[], int rettime[], int& total) {
+	BookingRecord booking;
+	total = 0;
+	if (!loadBookingJson(currentUser, booking)) { noTickets = 0; return; }
+	total = min(static_cast<int>(booking.passengers.size()), SIZE);
+	for (int i = 0; i < total; ++i) {
+		firstname[i] = booking.passengers[i].firstName; lastname[i] = booking.passengers[i].lastName;
+		depflight[i] = booking.departureFlight; depdate[i] = booking.departureDate; deptime[i] = booking.departureSlot;
+		retflight[i] = booking.returnFlight; retdate[i] = booking.returnDate; rettime[i] = booking.returnSlot;
 	}
-	if (totpassenger > 0) {
-		firstNameD = firstname[0];
-		lastNameD = lastname[0];
-		flightDepartD = depflight[0];
-		departDD = depdate[0];
-		slotDepartD = deptime[0];
-
-		flightReturnD = retflight[0];
-		returnDD = retdate[0];
-		slotReturnD = rettime[0];
-		noTickets = totpassenger;
-	}
-	else {
-
-		noTickets = 0;
-	}
-	readingFile.close();
+	updateGlobals(booking);
 }
 
-void editBooking(string firstname[], string lastname[], int depflight[], string depdate[], int deptime[], int retflight[], string retdate[], int rettime[], int totpassenger) {
-	char editNameChoice, confirm;
-	int passengerNum, editChoice, newFlightOrSlot;
-	string newDate;
-	ifstream checkFile(currentUser + "_Booking.txt");
-	if (!checkFile.is_open()) {
-		title();
-		cout << "No booking available, please book your flight ticket(s)!" << endl;
-		system("pause");
-		return;
-	}
-	checkFile.close();
-
-	title();
+void editBooking(string[], string[], int[], string[], int[], int[], string[], int[], int total) {
+	BookingRecord booking;
+	if (!loadBookingJson(currentUser, booking) || total <= 0) { cout << "No booking available.\n"; return; }
+	if (isPaid(currentUser)) { cout << "Paid bookings cannot be edited.\n"; return; }
 	FlightSchedule();
-	cout << "Change passenger name? (y-yes, n-no): ";
-	cin >> editNameChoice;
-	editNameChoice = tolower(editNameChoice);
-	cin.ignore();
-
-	if (editNameChoice == 'y') {
-		cout << "Enter passenger number to change (1 to " << totpassenger << "): ";
-		cin >> passengerNum;
-		cin.ignore();
-		cout << "Enter new First Name: ";
-		getline(cin, firstname[passengerNum - 1]);
-		cout << "Enter new Last Name: ";
-		getline(cin, lastname[passengerNum - 1]);
-	}
-	else if (editNameChoice == 'n') {
-		cout << "Please select item to amend" << endl;
-		cout << "1. Departure Flight" << endl;
-		cout << "2. Departure Date" << endl;
-		cout << "3. Departure Slot" << endl;
-		cout << "4. Return Flight" << endl;
-		cout << "5. Return Date" << endl;
-		cout << "6. Return Slot" << endl;
-		cout << "Select: ";
-		cin >> editChoice;
-		cin.ignore();
-
-		cout << "Follow the details of the 1st Passenger " << firstname[0] << " " << lastname[0] << endl;
-		if (editChoice == 1) {
-			cout << "Old departure flight: " << flightDepartD << endl;
-			cout << "New departure flight: ";
-			cin >> newFlightOrSlot;
-			cin.ignore();
-			for (int i = 0; i < totpassenger; i++) {
-				depflight[i] = newFlightOrSlot;
-			}
-
-		}
-		else if (editChoice == 2) {
-			cout << "Old departure date: " << departDD << endl;
-			cout << "New departure date: ";
-			getline(cin, newDate);
-			for (int i = 0; i < totpassenger; i++) {
-				depdate[i] = newDate;
-			}
-
-		}
-		else if (editChoice == 3) {
-			cout << "Old departure slot: " << slotDepartD << endl;
-			cout << "New departure slot: ";
-			cin >> newFlightOrSlot;
-			cin.ignore();
-			for (int i = 0; i < totpassenger; i++) {
-				deptime[i] = newFlightOrSlot;
-			}
-
-		}
-		else if (editChoice == 4) {
-			cout << "Old return flight: " << flightReturnD << endl;
-			cout << "New return flight: ";
-			cin >> newFlightOrSlot;
-			cin.ignore();
-			for (int i = 0; i < totpassenger; i++) {
-				retflight[i] = newFlightOrSlot;
-			}
-		}
-		else if (editChoice == 5) {
-			cout << "Old return date: " << returnDD << endl;
-			cout << "New return date: ";
-			getline(cin, newDate);
-			for (int i = 0; i < totpassenger; i++) {
-				retdate[i] = newDate;
-			}
-
-		}
-		else if (editChoice == 6) {
-			cout << "Follow the details of the 1st Passenger " << firstname[0] << " " << lastname[0] << endl;
-			cout << "Old return slot: " << slotReturnD << endl;
-			cout << "New return slot: ";
-			cin >> newFlightOrSlot;
-			cin.ignore();
-			for (int i = 0; i < totpassenger; i++) {
-				rettime[i] = newFlightOrSlot;
-			}
-		}
-		else {
-			cout << "Invalid input. Please try again. . ." << endl;
-			return;
-		}
-
+	if (yesNo("Change passenger name? (y-yes, n-no): ") == 'y') {
+		int passenger = readIntInRange("Passenger number: ", 1, total) - 1;
+		booking.passengers[passenger].firstName = requiredLine("New First Name: ");
+		booking.passengers[passenger].lastName = requiredLine("New Last Name: ");
 	}
 	else {
-		cout << "Invalid input. Please try again. . ." << endl;
-		return;
+		cout << "1. Departure Flight\n2. Departure Date\n3. Departure Slot\n4. Return Flight\n5. Return Date\n6. Return Slot\n";
+		int choice = readIntInRange("Select: ", 1, 6);
+		if (choice == 1) booking.departureFlight = readIntInRange("New departure flight: ", 1, 8);
+		else if (choice == 2) booking.departureDate = validDate("New departure date: ");
+		else if (choice == 3) booking.departureSlot = readIntInRange("New departure slot: ", 1, 4);
+		else if (choice == 4) booking.returnFlight = readIntInRange("New return flight: ", 1, 8);
+		else if (choice == 5) booking.returnDate = validDate("New return date: ");
+		else booking.returnSlot = readIntInRange("New return slot: ", 1, 4);
+		if (!validDateOrder(booking.departureDate, booking.returnDate)) { cout << "Invalid date order; changes were not saved.\n"; return; }
 	}
-	cout << "Confirm Amendment? (y-yes,n-no): ";
-	cin >> confirm;
-	confirm = tolower(confirm);
-	if (confirm == 'y') {
-		ofstream updateFile(currentUser + "_Booking.txt");
-		if (!updateFile.is_open()) {
-			cout << "Error saving booking." << endl;
-			return;
-		}
-		for (int i = 0; i < totpassenger; i++) {
-			updateFile << firstname[i] << endl;
-			updateFile << lastname[i] << endl;
-			updateFile << depflight[i] << endl;
-			updateFile << depdate[i] << endl;
-			updateFile << deptime[i] << endl;
-			updateFile << retflight[i] << endl;
-			updateFile << retdate[i] << endl;
-			updateFile << rettime[i] << endl;
-		}
-		updateFile.close();
+	if (yesNo("Confirm amendment? (y-yes, n-no): ") == 'y') {
+		cout << (saveBookingJson(booking) ? "Booking updated.\n" : "Unable to update booking.\n");
+		updateGlobals(booking);
 	}
-	else {
-		cout << "Amendment Cancelled..." << endl;
-	}
-
 }
 
 void payment() {
-	string flightroute, departTime, returnroute, returnTime;
-	string cardholname, cardnum, validdate, securcode, bankname;
-	char transacconfirm;
-	int departprice = 0, returnprice = 0, finalprice = 0, paymentmethod;
-
-	string bookingfilename = currentUser + "_Booking.txt";
-	ifstream fileExist(bookingfilename);
-	if (!fileExist.is_open()) {
-		title();
-		cout << "No booking available, please book your flight ticket(s)!" << endl;
-		system("pause");
-		return;
-	}
-	fileExist.close();
-
-	string paymentfilename = currentUser + "_paymentCheckIn.txt";
-	ofstream paymentFile(paymentfilename);
-	if (!paymentFile.is_open()) {
-		cout << "File cannot be open. Please try again." << endl;
-		return;
-	}
-
-	if (flightDepartD == 1) {
-		flightroute = "KL - Penang";
-		departprice = 200;
-	}
-	else if (flightDepartD == 2) {
-		flightroute = "Penang - KL";
-		departprice = 200;
-	}
-	else if (flightDepartD == 3) {
-		flightroute = "KL - Johor";
-		departprice = 200;
-	}
-	else if (flightDepartD == 4) {
-		flightroute = "Johor - KL";
-		departprice = 200;
-	}
-	else if (flightDepartD == 5) {
-		flightroute = "KL - Singapore";
-		departprice = 250;
-	}
-	else if (flightDepartD == 6) {
-		flightroute = "Singapore - KL";
-		departprice = 250;
-	}
-	else if (flightDepartD == 7) {
-		flightroute = "KL - Bangkok";
-		departprice = 300;
-	}
-	else if (flightDepartD == 8) {
-		flightroute = "Bangkok - KL";
-		departprice = 300;
-	}
-
-	if (slotDepartD == 1) {
-		departTime = "8:00 A.M.";
-	}
-	else if (slotDepartD == 2) {
-		departTime = "13:00 P.M.";
-	}
-	else if (slotDepartD == 3) {
-		departTime = "18:00 P.M.";
-	}
-	else if (slotDepartD == 4) {
-		departTime = "23:00 P.M.";
-	}
-
-	//RETURN ROUTE
-	if (flightReturnD == 1) {
-		returnroute = "KL - Penang";
-		returnprice = 200;
-	}
-	else if (flightReturnD == 2) {
-		returnroute = "Penang - KL";
-		returnprice = 200;
-	}
-	else if (flightReturnD == 3) {
-		returnroute = "KL - Johor";
-		returnprice = 200;
-	}
-	else if (flightReturnD == 4) {
-		returnroute = "Johor - KL";
-		returnprice = 200;
-	}
-	else if (flightReturnD == 5) {
-		returnroute = "KL - Singapore";
-		returnprice = 250;
-	}
-	else if (flightReturnD == 6) {
-		returnroute = "Singapore - KL";
-		returnprice = 250;
-	}
-	else if (flightReturnD == 7) {
-		returnroute = "KL - Bangkok";
-		returnprice = 300;
-	}
-	else if (flightReturnD == 8) {
-		returnroute = "Bangkok - KL";
-		returnprice = 300;
-	}
-
-	//RETURN TIME
-	if (slotReturnD == 1) {
-		returnTime = "8:00 A.M.";
-	}
-	else if (slotReturnD == 2) {
-		returnTime = "13:00 P.M.";
-	}
-	else if (slotReturnD == 3) {
-		returnTime = "18:00 P.M.";
-	}
-	else if (slotReturnD == 4) {
-		returnTime = "23:00 P.M.";
-	}
-
-	cout << "Total Flight Ticket(s): " << noTickets << endl;
-	cout << "Departure Flight: " << departDD << ", " << flightroute << ", " << departTime << endl;
-	cout << "Return Flight: " << returnDD << ", " << returnroute << ", " << returnTime << endl;
-	finalprice = (departprice + returnprice) * noTickets;
-	cout << "Total Payment:  (RM " << departprice << " + RM " << returnprice << ") * " << noTickets << " = RM " << finalprice << endl;
-	cout << "Please choose your payment method:" << endl;
-	cout << "1. Credit card/Debit Card" << endl;
-	cout << "2. Bank Transfer" << endl;
-	cin >> paymentmethod;
-
-	if (paymentmethod == 1) {//CREDIT/DEBIT CARD
-		cout << "Transfer amount: RM" << finalprice << endl;
-		cin.ignore();
-		cout << "Card Holder Name: ";
-		getline(cin, cardholname);
-
-		cout << "Card Number: ";
-		getline(cin, cardnum);
-
-		cout << "Card Valid Date (MM/YYYY): ";
-		getline(cin, validdate);
-
-		cout << "Security Code: ";
-		getline(cin, securcode);
-
-
-	}
-	else if (paymentmethod == 2) {//BANK TRANFER
-		cout << "Transfer amount: RM" << finalprice << endl;
-		cout << "Bank Name: ";
-		cin >> bankname;
-		cin.ignore();
-		cout << "Card Holder Name: ";
-		cin >> cardholname;
-		cin.ignore();
-		cout << "Card Number: ";
-		cin >> cardnum;
-		cin.ignore();
-		cout << "Card Valid Date (MM/YYYY): ";
-		cin >> validdate;
-		cin.ignore();
-		cout << "Security Code: ";
-		cin >> securcode;
-		cin.ignore();
-	}
-	else {
-		cout << "Invalid input. Please try again." << endl;
-		return;
-	}
-	cout << "Confirm Transaction? (y-yes, n-no): ";
-	cin >> transacconfirm;
-	cin.ignore();
-	if (transacconfirm == 'y' || transacconfirm == 'Y') {
-		paymentFile << finalprice << endl;
-		paymentFile << "Paid" << endl;
-		for (int i = 1; i <= noTickets; i++) {
-			paymentFile << "NULL" << endl;//FIRST NAME
-			paymentFile << "NULL" << endl;//LAST NAME
-			paymentFile << "NULL" << endl;//PASSPORT NUMBER
-			paymentFile << "NULL" << endl;//CONTACT FIRST NAME
-			paymentFile << "NULL" << endl;//CONTACT LAST NAME
-			paymentFile << "NULL" << endl;//PHONE NUMBER
-		}
-		paymentFile << "Not Check" << endl;
-	}
-	else if (transacconfirm == 'n' || transacconfirm == 'N') {
-		paymentFile << finalprice << endl;
-		paymentFile << "Unpaid" << endl;
-	}
-	paymentFile.close();
+	BookingRecord booking;
+	if (!loadBookingJson(currentUser, booking)) { cout << "No booking available.\n"; return; }
+	PaymentRecord oldPayment;
+	if (loadPaymentJson(booking.bookingId, oldPayment) && oldPayment.status == "Paid") { cout << "This booking has already been paid.\n"; return; }
+	int total = (prices[booking.departureFlight - 1] + prices[booking.returnFlight - 1]) * static_cast<int>(booking.passengers.size());
+	cout << "Booking ID: " << booking.bookingId << "\nDeparture: " << booking.departureDate << ", " << routes[booking.departureFlight - 1]
+		<< ", " << slots[booking.departureSlot - 1] << "\nReturn: " << booking.returnDate << ", " << routes[booking.returnFlight - 1]
+		<< ", " << slots[booking.returnSlot - 1] << "\nTotal Payment: RM " << total << '\n';
+	int method = readIntInRange("Payment method (1-card, 2-bank transfer): ", 1, 2);
+	cout << "Selected: " << (method == 1 ? "Card" : "Bank transfer") << ". Payment details are not stored.\n";
+	if (yesNo("Confirm transaction? (y-yes, n-no): ") == 'n') { cout << "Payment cancelled; existing data was not changed.\n"; return; }
+	PaymentRecord record{ booking.bookingId, total, "Paid", "Not Checked", booking.passengers };
+	cout << (savePaymentJson(record) ? "Payment recorded successfully.\n" : "Unable to save payment.\n");
 }
 
-void readPaymentCheckIn(int& totpassenger, string& paymentstatus, string firstname[], string lastname[], string passport[], string confirst[], string conlast[], string mobileno[], string& checkinstatus) {
-	int amount;
-	string line;
-	//Read Passengers First Name and Last Name
-	ifstream readFirstLastName(currentUser + "_Booking.txt");
-	if (!readFirstLastName.is_open()) {
-		title();
-		cout << "No booking available, please book your flight ticket(s)!" << endl;
-		system("pause");
-		return;
+void readPaymentCheckIn(int& total, string& status, string firstname[], string lastname[], string passport[], string confirst[], string conlast[], string mobile[], string& checkin) {
+	BookingRecord booking;
+	PaymentRecord paymentRecord;
+	total = 0; status.clear(); checkin.clear();
+	if (!loadBookingJson(currentUser, booking)) return;
+	total = min(static_cast<int>(booking.passengers.size()), SIZE);
+	if (!loadPaymentJson(booking.bookingId, paymentRecord)) return;
+	status = paymentRecord.status; checkin = paymentRecord.checkInStatus;
+	for (int i = 0; i < total; ++i) {
+		const PassengerRecord& source = i < paymentRecord.passengers.size() ? paymentRecord.passengers[i] : booking.passengers[i];
+		firstname[i] = booking.passengers[i].firstName; lastname[i] = booking.passengers[i].lastName;
+		passport[i] = source.passport; confirst[i] = source.contactFirstName; conlast[i] = source.contactLastName; mobile[i] = source.contactMobile;
 	}
-	for (int j = 0; j < totpassenger; j++) {
-		getline(readFirstLastName, firstname[j]);
-		getline(readFirstLastName, lastname[j]);
-		getline(readFirstLastName, line);//1
-		getline(readFirstLastName, line);//2
-		getline(readFirstLastName, line);//3
-		getline(readFirstLastName, line);//4
-		getline(readFirstLastName, line);//5
-		getline(readFirstLastName, line);//6
-	}
-	readFirstLastName.close();
-
-	//Read _paymentCheckIn.txt
-	string checkingfilename = currentUser + "_paymentCheckIn.txt";
-	ifstream readFile(checkingfilename);
-
-
-	readFile >> amount;
-	readFile.ignore();
-	getline(readFile, paymentstatus);
-	for (int i = 0; i < totpassenger; i++) {
-		getline(readFile, line);
-		getline(readFile, line);
-		getline(readFile, passport[i]);
-		getline(readFile, confirst[i]);
-		getline(readFile, conlast[i]);
-		getline(readFile, mobileno[i]);
-	}
-	getline(readFile, checkinstatus);
-	readFile.close();
 }
 
-void checkIn(int& totpassenger, string& paymentstatus, string firstname[], string lastname[], string passport[], string confirst[], string conlast[], string mobileno[], string& checkinstatus) {
-	string line;
-	char samecon, checkincon;
-	ifstream checkinFile(currentUser + "_paymentCheckIn.txt");
-	if (!checkinFile.is_open()) {
-		cout << "File not exist. Please try again." << endl;
-		system("pause");
-		return;
-	}
-
-
-	if (paymentstatus == "Unpaid") {
-
-		cout << "Payment Status: " << paymentstatus << endl;
-		cout << "No payment for the flight ticket (s) yet, please proceed to make payment before check in. Thank you!" << endl;
-		system("pause");
-	}
-	else if (paymentstatus == "Paid") {
-		cout << "Payment Status: " << paymentstatus << endl;
-		cout << "~Proceed to check in~" << endl;
-
-		cout << "Passenger 1" << endl;
-		cout << "First Name: " << firstname[0] << endl;
-		cout << "Last Name: " << lastname[0] << endl;
-		cout << "Passport Number: ";
-		getline(cin, passport[0]);
-		cout << "Contact Person First Name: ";
-		getline(cin, confirst[0]);
-		cout << "Contact Person Last Name: ";
-		getline(cin, conlast[0]);
-		cout << "Contact Person Phone Number: ";
-		getline(cin, mobileno[0]);
-
-		for (int i = 1; i < totpassenger; i++) {
-			cout << "Passenger " << i + 1 << endl;
-			cout << "First Name: " << firstname[i] << endl;
-			cout << "Last Name: " << lastname[i] << endl;
-			cout << "Passport Number: ";
-			getline(cin, passport[i]);
-			cout << "Same contact person as previous? (y-yes, n-no): ";
-			cin >> samecon;
-			cin.ignore();
-			if (samecon == 'y') {
-				mobileno[i] = mobileno[0];
-
-				cout << "Contact Person First Name: ";
-				getline(cin, confirst[i]);
-				cout << "Contact Person Last Name: ";
-				getline(cin, conlast[i]);
-				cout << "Contact Person Phone Number: " << mobileno[i] << endl;
-			}
-			else if (samecon == 'n') {
-				cout << "Contact Person First Name: ";
-				getline(cin, confirst[i]);
-				cout << "Contact Person Last Name: ";
-				getline(cin, conlast[i]);
-				cout << "Contact Person Phone Number: ";
-				getline(cin, mobileno[i]);
-
-			}
-
+void checkIn(int& total, string& status, string[], string[], string[], string[], string[], string[], string& checkin) {
+	BookingRecord booking;
+	PaymentRecord record;
+	if (!loadBookingJson(currentUser, booking) || !loadPaymentJson(booking.bookingId, record)) { cout << "Complete booking and payment before check-in.\n"; return; }
+	if (record.status != "Paid") { cout << "Payment is required before check-in.\n"; return; }
+	if (record.checkInStatus == "Checked") { cout << "This booking is already checked in.\n"; return; }
+	total = min(static_cast<int>(booking.passengers.size()), SIZE);
+	for (int i = 0; i < total; ++i) {
+		PassengerRecord& passenger = booking.passengers[i];
+		cout << "Passenger " << i + 1 << ": " << passenger.firstName << ' ' << passenger.lastName << '\n';
+		passenger.passport = requiredLine("Passport Number: ");
+		if (i > 0 && yesNo("Same contact person as passenger 1? (y-yes, n-no): ") == 'y') {
+			passenger.contactFirstName = booking.passengers[0].contactFirstName;
+			passenger.contactLastName = booking.passengers[0].contactLastName;
+			passenger.contactMobile = booking.passengers[0].contactMobile;
 		}
-		cout << "Confirm Check in? (y-yes, n-no):";
-		cin >> checkincon;
-		cin.ignore();
-		if (checkincon == 'y') {
-			string amount;
-			getline(checkinFile, amount);
-			checkinFile.close();
-
-
-			ofstream checkinFilewrite(currentUser + "_paymentCheckIn.txt");
-			if (!checkinFilewrite.is_open()) {
-				cout << "File does not exists. Please try again." << endl;
-				return;
-
-			}
-			checkinFilewrite << amount << endl;
-			checkinFilewrite << paymentstatus << endl;
-			for (int j = 0; j < totpassenger; j++) {
-				checkinFilewrite << firstname[j] << endl;
-				checkinFilewrite << lastname[j] << endl;
-				checkinFilewrite << passport[j] << endl;
-				checkinFilewrite << confirst[j] << endl;
-				checkinFilewrite << conlast[j] << endl;
-				checkinFilewrite << mobileno[j] << endl;
-			}
-			checkinstatus = "Checked";
-			checkinFilewrite << checkinstatus << endl;
-
-			checkinFilewrite.close();
-
+		else {
+			passenger.contactFirstName = requiredLine("Contact First Name: ");
+			passenger.contactLastName = requiredLine("Contact Last Name: ");
+			passenger.contactMobile = requiredLine("Contact Phone Number: ");
 		}
-		else if (checkincon == 'n') {
-			return;
-		}
-
-
 	}
-
-
-	system("pause");
+	if (yesNo("Confirm check-in? (y-yes, n-no): ") == 'n') return;
+	record.passengers = booking.passengers; record.checkInStatus = "Checked";
+	if (savePaymentJson(record)) { status = record.status; checkin = record.checkInStatus; cout << "Check-in successful.\n"; }
+	else cout << "Unable to save check-in.\n";
 }
 
-void printInvoice(string firstname[], string lastname[], string passport[], string confirst[], string conlast[], string mobileno[], int depflight[], string depdate[], int deptime[], int retflight[], string retdate[], int rettime[]) {
-
-	ifstream checkFile(currentUser + "_paymentCheckIn.txt");
-	if (!checkFile.is_open()) {
-		cout << "No booking available, please book your flight ticket(s)!" << endl;
-		system("pause");
-		return;
+void printInvoice(string[], string[], string[], string[], string[], string[], int[], string[], int[], int[], string[], int[]) {
+	BookingRecord booking;
+	PaymentRecord record;
+	if (!loadBookingJson(currentUser, booking) || !loadPaymentJson(booking.bookingId, record) || record.status != "Paid") {
+		cout << "A paid booking is required before an invoice can be generated.\n"; return;
 	}
-	checkFile.close();
-
-	string routes[] = { "KL - Penang","Penang - KL","KL - Johor","Johor - KL","KL - Singapore","Singapore - KL","KL - Bangkok","Bangkok - KL" };
-	string slots[] = { "8:00 A.M.", "13:00 P.M.", "18:00 P.M.", "23:00 P.M." };
-
-	///////////////////////////////////////////
-	if (depflight[0] < 1 || depflight[0] > 8 ||
-		deptime[0] < 1 || deptime[0] > 4 ||
-		retflight[0] < 1 || retflight[0] > 8 ||
-		rettime[0] < 1 || rettime[0] > 4)
-	{
-		cerr << "Error: Invalid flight or time slot data. Cannot generate invoice." << endl;
-		cout << "Press Enter to continue...";
-		cin.ignore();
-		cin.get();
-		return;
+	ostringstream invoice;
+	invoice << "Welcome to JSJK Airline Company\nBooking ID: " << booking.bookingId << "\nPayment Status: " << record.status
+		<< "\nAmount Paid: RM " << record.amount << "\nDeparture Flight: " << routes[booking.departureFlight - 1]
+		<< "\nDeparture Date: " << booking.departureDate << "\nDeparture Slot: " << slots[booking.departureSlot - 1]
+		<< "\nReturn Flight: " << routes[booking.returnFlight - 1] << "\nReturn Date: " << booking.returnDate
+		<< "\nReturn Slot: " << slots[booking.returnSlot - 1] << "\n\n";
+	for (size_t i = 0; i < booking.passengers.size(); ++i) {
+		const PassengerRecord& details = i < record.passengers.size() ? record.passengers[i] : booking.passengers[i];
+		invoice << "Passenger " << i + 1 << "\nName: " << booking.passengers[i].firstName << ' ' << booking.passengers[i].lastName
+			<< "\nPassport Number: " << details.passport << "\nContact Person: " << details.contactFirstName << ' ' << details.contactLastName
+			<< "\nContact Mobile: " << details.contactMobile << "\n\n";
 	}
-
-
-	ofstream invoiceFile(currentUser + "_invoice.txt");
-	if (!invoiceFile.is_open()) {
-		cout << "Error opening file. Please try again. . ." << endl;
-		return;
-	}
-
-	string flightroute = routes[depflight[0] - 1];
-	string departTime = slots[deptime[0] - 1];
-	string returnroute = routes[retflight[0] - 1];
-	string returnTime = slots[rettime[0] - 1];
-
-	invoiceFile << "Welcome to JSJK Airline Company" << endl;
-	invoiceFile << "Departure Flight: " << flightroute << endl;
-	invoiceFile << "Departure Date: " << depdate[0] << endl;
-	invoiceFile << "Departure Slot: " << departTime << endl;
-	invoiceFile << "Return Flight: " << returnroute << endl;
-	invoiceFile << "Return Date: " << retdate[0] << endl;
-	invoiceFile << "Return Slot: " << returnTime << endl;
-	invoiceFile << endl;
-
-	for (int i = 0; i < noTickets; i++) {
-		invoiceFile << "Passenger " << i + 1 << endl;
-		invoiceFile << "Name: " << firstname[i] << " " << lastname[i] << endl;
-		invoiceFile << "Passport Number: " << passport[i] << endl;
-		invoiceFile << "Contact Person: " << confirst[i] << " " << conlast[i] << endl;
-		invoiceFile << "Contact Person Mobile No: " << mobileno[i] << endl;
-		invoiceFile << endl;
-	}
-
-	cout << "Invoice printed, please check your folder!" << endl;
-	invoiceFile.close();
-	cout << "Press Enter to continue...";
-	cin.ignore();
-	cin.get();
+	filesystem::path path = invoicePathForBooking(booking.bookingId);
+	cout << (writeTextAtomically(path, invoice.str()) ? "Invoice created at " + path.string() + "\n" : "Unable to create invoice.\n");
 }
-

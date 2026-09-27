@@ -6,6 +6,7 @@ inline constexpr int SIZE = 100;
 
 extern std::string currentUser;
 
+int readIntInRange(const std::string& prompt, int minimum, int maximum);
 void title();
 void menu();
 void FlightSchedule();

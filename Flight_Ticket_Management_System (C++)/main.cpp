@@ -1,4 +1,5 @@
 #include "FlightSystem.h"
+#include "JsonStorage.h"
 
 #include <cstdlib>
 #include <iostream>
@@ -7,7 +8,12 @@
 using namespace std;
 
 int main() {
-	int contRL = 1, choice, userCount = 0, menuchoice, contRL2 = 1, totbooking;
+	if (!initializeJsonStorage()) {
+		cerr << "Unable to initialize the data directory.\n";
+		return 1;
+	}
+
+	int contRL = 1, choice, userCount = 0, menuchoice, contRL2 = 1, totbooking = 0;
 	string paymentStatus, checkinStatus;
 	string firstName[SIZE], lastName[SIZE], mobileNum[SIZE], email[SIZE], userName[SIZE], passWord[SIZE];
 	string passPort[SIZE], conFirst[SIZE], conLast[SIZE], mobileno[SIZE];
@@ -16,17 +22,14 @@ int main() {
 
 	do {
 		title();
-		cout << "1.Register New User " << '\n';
-		cout << "2.Login" << '\n';
-		cout << "3.Quit" << '\n';
-		cout << "Choice: ";
-		cin >> choice;
-		cin.ignore();
+		cout << "1. Register New User " << '\n';
+		cout << "2. Login" << '\n';
+		cout << "3. Quit" << '\n';
+		choice = readIntInRange("Choice: ", 1, 3);
 
 		if (choice == 1) {
 			registration();
-			cout << "Do you want to continue login? (1-yes, 2-no): ";
-			cin >> contRL;
+			contRL = readIntInRange("Do you want to continue login? (1-yes, 2-no): ", 1, 2);
 			if (contRL == 2) {
 				return 0;
 			}
@@ -40,9 +43,7 @@ int main() {
 					title();
 					cout << "Username: " << currentUser << '\n';
 					menu();
-					cout << "Choice: ";
-					cin >> menuchoice;
-					cin.ignore();
+					menuchoice = readIntInRange("Choice: ", 1, 6);
 					system("cls");
 
 					if (menuchoice == 1) {
@@ -81,8 +82,7 @@ int main() {
 				} while (contRL2 == 1);
 			}
 			else {
-				cout << "Do you want to continue login? (1-yes, 2-no): ";
-				cin >> contRL;
+				contRL = readIntInRange("Do you want to continue login? (1-yes, 2-no): ", 1, 2);
 				if (contRL == 2) {
 					return 0;
 				}
