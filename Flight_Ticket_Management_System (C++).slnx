@@ -1,0 +1,7 @@
+<Solution>
+  <Configurations>
+    <Platform Name="x64" />
+    <Platform Name="x86" />
+  </Configurations>
+  <Project Path="Flight_Ticket_Management_System (C++)/Flight_Ticket_Management_System (C++).vcxproj" />
+</Solution>
