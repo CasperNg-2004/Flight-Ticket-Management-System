@@ -198,6 +198,3 @@ Passwords are currently stored in plaintext JSON so that existing authentication
 - Add cancellation and refund workflows.
 - Improve error reporting for corrupted JSON records.
 
-## License
-
-No license has been specified for this project.
